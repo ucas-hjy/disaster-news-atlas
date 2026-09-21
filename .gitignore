@@ -1,0 +1,19 @@
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+
+# Source data must never be committed. The site needs only what is in docs/.
+*.xlsx
+*.xls
+*.csv
+*.shp
+*.shx
+*.dbf
+*.prj
+*.cpg
+*.zip
+*.7z
+*.parquet

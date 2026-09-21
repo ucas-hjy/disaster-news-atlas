@@ -1,0 +1,1036 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Atmospheric Disasters Atlas</title>
+
+<!-- Version pinned. @latest would break this page the day deck.gl ships an
+     incompatible release, and a page attached to a paper has to keep opening.
+     To remove the dependency on a CDN entirely, download this file once and
+     commit it as lib/deck.min.js, then point the src here at that copy. -->
+<script src="https://unpkg.com/deck.gl@9.0.0/dist.min.js"></script>
+
+<style>
+:root {
+  --paper: #f8f5f0;
+  --ink: #2f2f2f;
+  --soft: #6e6a63;
+  --line: #d8d2c6;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  font-family: Georgia, serif;
+  overflow: hidden;
+}
+
+#container {
+  position: absolute;
+  inset: 0;
+  transition: opacity 0.4s ease;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(rgba(0,0,0,0.015) 1px, transparent 1px);
+  background-size: 4px 4px;
+  opacity: 0.3;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* ── Left sidebar ── */
+.sidebar {
+  position: absolute;
+  left: 28px;
+  top: 28px;
+  width: 340px;
+  height: calc(100% - 56px);
+  background: rgba(255,255,255,0.65);
+  backdrop-filter: blur(10px);
+  border-radius: 14px;
+  padding: 20px;
+  overflow: auto;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+  z-index: 10;
+  border: 1px solid rgba(255,255,255,0.4);
+  box-sizing: border-box;
+}
+
+.title    { font-size: 20px; font-weight: bold; color: var(--ink); }
+.subtitle { font-size: 13px; color: var(--soft); margin-bottom: 12px; font-style: italic; }
+
+.controls { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+button.icon-btn {
+  width: 32px; height: 32px; border: none; border-radius: 50%;
+  background: rgba(0,0,0,0.06); cursor: pointer; transition: background 0.2s;
+}
+button.icon-btn:hover { background: rgba(0,0,0,0.12); }
+input[type="range"] { flex: 1; accent-color: var(--ink); }
+.year { font-size: 14px; font-weight: bold; color: var(--ink); width: 40px; text-align: right; }
+
+input.search-box {
+  width: 100%; border: none; border-bottom: 1px solid var(--line);
+  background: transparent; margin-bottom: 12px; font-size: 14px;
+  padding: 6px 0; outline: none; box-sizing: border-box; font-family: Georgia, serif;
+}
+input.search-box:focus { border-bottom-color: var(--ink); }
+
+.type-filters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+.type-btn {
+  font-family: inherit; font-size: 11px; padding: 4px 8px; border-radius: 4px;
+  border: 1px solid var(--line); background: rgba(255,255,255,0.5); color: var(--soft);
+  cursor: pointer; transition: all 0.2s; display: flex; align-items: center; gap: 4px;
+}
+.type-btn:hover  { border-color: var(--soft); color: var(--ink); background: #fff; }
+.type-btn.active { border-color: var(--ink); color: var(--ink); font-weight: bold; background: rgba(0,0,0,0.03); }
+.color-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+
+.country-header {
+  display: flex; justify-content: space-between; cursor: pointer;
+  font-size: 14px; padding: 8px 0; border-bottom: 1px dashed transparent; font-weight: bold;
+}
+.country-header:hover { border-bottom-color: var(--line); }
+.disaster-list {
+  display: none; padding-left: 10px; margin-bottom: 8px;
+  border-left: 1px solid var(--line); margin-left: 4px;
+}
+.disaster-item {
+  font-size: 12.5px; color: var(--soft); cursor: pointer;
+  padding: 4px 0; transition: 0.2s; display: flex;
+  justify-content: space-between; align-items: center;
+}
+.disaster-item:hover { color: var(--ink); }
+.disaster-item.active {
+  font-weight: bold; color: var(--ink); padding-left: 6px;
+  border-left: 2px solid var(--ink); margin-left: -2px;
+}
+.adm1-tag {
+  font-size: 10px; opacity: 0.6; font-style: italic;
+  max-width: 120px; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; text-align: right;
+}
+
+/* ── Footer inside the sidebar ── */
+.credits {
+  margin-top: 22px; padding-top: 12px;
+  border-top: 1px solid var(--line);
+  font-size: 10.5px; line-height: 1.6; color: var(--soft);
+}
+.credits a { color: var(--soft); }
+
+/* ── View toggle ── */
+.view-toggle {
+  position: absolute; right: 28px; top: 28px; z-index: 10;
+  background: rgba(255,255,255,0.65); backdrop-filter: blur(10px);
+  border: 1px solid var(--line); padding: 8px 16px; border-radius: 20px;
+  font-family: Georgia, serif; font-size: 13px; color: var(--ink);
+  cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+  transition: right 0.35s ease, background 0.3s, transform 0.3s, box-shadow 0.3s;
+}
+.view-toggle:hover { background: #fff; transform: translateY(-1px); box-shadow: 0 6px 20px rgba(0,0,0,0.08); }
+.view-toggle.panel-open { right: 404px; }
+
+/* ── Year loading pill ── */
+#yearLoading {
+  position: absolute; left: 50%; top: 28px; transform: translateX(-50%);
+  z-index: 11; background: rgba(255,255,255,0.8); backdrop-filter: blur(10px);
+  border: 1px solid var(--line); border-radius: 20px; padding: 6px 16px;
+  font-size: 12px; color: var(--soft); font-style: italic;
+  display: none; box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+}
+#yearLoading.show { display: block; }
+
+/* ── Right news panel ── */
+#newsPanel {
+  position: absolute;
+  right: 28px; top: 28px; bottom: 28px;
+  width: 360px;
+  background: rgba(255,255,255,0.65);
+  backdrop-filter: blur(10px);
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.4);
+  box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  padding: 20px;
+  box-sizing: border-box;
+  transform: translateX(110%);
+  transition: transform 0.35s ease;
+  overflow: hidden;
+}
+#newsPanel.open { transform: translateX(0); }
+
+.news-panel-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 14px; flex-shrink: 0;
+}
+.news-panel-title { font-size: 16px; font-weight: bold; color: var(--ink); letter-spacing: 0.02em; }
+.news-close-btn {
+  width: 28px; height: 28px; border: none; border-radius: 50%;
+  background: rgba(0,0,0,0.06); cursor: pointer; font-size: 15px;
+  line-height: 28px; text-align: center; color: var(--soft);
+  transition: background 0.2s; flex-shrink: 0;
+}
+.news-close-btn:hover { background: rgba(0,0,0,0.12); color: var(--ink); }
+
+.disaster-info-card {
+  background: rgba(255,255,255,0.55);
+  border: 1px solid var(--line); border-radius: 10px;
+  padding: 13px 14px; margin-bottom: 12px; flex-shrink: 0;
+}
+.di-disno { font-size: 17px; font-weight: bold; color: var(--ink); margin-bottom: 3px; }
+.di-subtitle { font-size: 12px; color: var(--soft); font-style: italic; margin-bottom: 10px; }
+.di-row {
+  display: flex; justify-content: space-between;
+  font-size: 12px; padding: 4px 0; border-bottom: 1px solid var(--line);
+}
+.di-row:last-child { border-bottom: none; padding-bottom: 0; }
+.di-row b { color: var(--ink); }
+.di-fatal { font-weight: bold; color: #a25050; }
+
+.news-count-line { font-size: 12px; color: var(--soft); margin-bottom: 10px; flex-shrink: 0; }
+
+#newsSearch {
+  width: 100%; border: none; border-bottom: 1px solid var(--line);
+  background: transparent; margin-bottom: 12px; font-size: 13px;
+  padding: 6px 0; outline: none; box-sizing: border-box;
+  font-family: Georgia, serif; flex-shrink: 0;
+}
+#newsSearch:focus { border-bottom-color: var(--ink); }
+
+#newsList {
+  flex: 1; overflow-y: auto; overflow-x: hidden;
+  display: flex; flex-direction: column; gap: 8px;
+}
+#newsList::-webkit-scrollbar { width: 4px; }
+#newsList::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+
+.news-card {
+  background: rgba(255,255,255,0.6);
+  border: 1px solid var(--line); border-radius: 9px;
+  padding: 10px 12px; cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s; text-decoration: none;
+}
+.news-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.08);
+  background: rgba(255,255,255,0.85);
+}
+.news-card-row1 { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin-bottom: 4px; }
+.nc-date { font-size: 12px; color: var(--ink); font-weight: bold; }
+.nc-badge {
+  font-size: 10px; padding: 1px 6px; border-radius: 10px;
+  font-family: Georgia, serif; line-height: 1.6; white-space: nowrap;
+}
+.nc-source { font-size: 11px; color: var(--soft); margin-bottom: 4px; }
+.nc-url { font-size: 11px; color: #6a8fbe; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+#loadMoreBtn {
+  margin-top: 8px; padding: 8px; width: 100%;
+  border: 1px solid var(--line); border-radius: 8px;
+  background: rgba(255,255,255,0.5); font-family: Georgia, serif;
+  font-size: 12px; color: var(--soft); cursor: pointer;
+  transition: background 0.2s; flex-shrink: 0;
+}
+#loadMoreBtn:hover { background: #fff; color: var(--ink); }
+
+/* ── Chooser shown where several disasters share a unit ── */
+#chooser {
+  position: absolute; z-index: 12; display: none;
+  background: rgba(255,255,255,0.92); backdrop-filter: blur(10px);
+  border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.12);
+  padding: 8px; min-width: 220px; max-width: 300px;
+  font-family: Georgia, serif;
+}
+#chooser.show { display: block; }
+.chooser-head { font-size: 11px; color: var(--soft); font-style: italic; padding: 2px 6px 6px; }
+.chooser-item {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  border: none; background: transparent; text-align: left; cursor: pointer;
+  font-family: inherit; font-size: 12.5px; color: var(--ink);
+  padding: 6px; border-radius: 6px;
+}
+.chooser-item:hover { background: rgba(0,0,0,0.05); }
+.chooser-item small { color: var(--soft); margin-left: auto; white-space: nowrap; }
+
+.news-state { font-size: 13px; color: var(--soft); text-align: center; padding: 20px 0; font-style: italic; }
+</style>
+</head>
+<body>
+
+<div id="container"></div>
+<button id="viewToggle" class="view-toggle">Switch to 2D Map</button>
+<div id="yearLoading">Loading year…</div>
+<div id="chooser"></div>
+
+<div class="sidebar">
+  <div class="title">Atmospheric Disasters</div>
+  <div class="subtitle">News coverage of climate disasters · 2015–2023</div>
+  <div class="controls">
+    <button class="icon-btn" id="home" title="Back to global view">🌍</button>
+    <button class="icon-btn" id="play" title="Play / Pause">▶</button>
+    <input type="range" min="2015" max="2023" value="2020" id="yearSlider">
+    <div class="year" id="yearLabel">2020</div>
+  </div>
+  <input id="search" class="search-box" placeholder="Search country, province or DisNo..." />
+  <div class="type-filters" id="typeFilters"></div>
+  <div id="list"></div>
+
+  <div class="credits">
+    Disasters from EM-DAT, CRED / UCLouvain. Administrative boundaries from the
+    FAO Global Administrative Unit Layers, 2015. News records from the GDELT
+    Global Knowledge Graph; each entry links to the publisher's own page and no
+    article text is reproduced here.
+    <br><br>
+    Companion to <span id="paperRef">[paper reference]</span>.
+    Data and code archived at <a id="doiLink" href="#">[DOI]</a>.
+  </div>
+</div>
+
+<div id="newsPanel">
+  <div class="news-panel-header">
+    <div class="news-panel-title">News Coverage</div>
+    <button class="news-close-btn" id="newsPanelClose" title="Close">×</button>
+  </div>
+
+  <div class="disaster-info-card" id="disasterInfoCard">
+    <div class="di-disno" id="diDisno">—</div>
+    <div class="di-subtitle" id="diSubtitle"></div>
+    <div class="di-row"><b>Areas</b><span id="diAreas" style="text-align:right;max-width:220px;">—</span></div>
+    <div class="di-row"><b>Start</b><span id="diStart">—</span></div>
+    <div class="di-row"><b>End</b><span id="diEnd">—</span></div>
+    <div class="di-row"><b>Fatalities</b><span class="di-fatal" id="diFatal">—</span></div>
+  </div>
+
+  <div class="news-count-line" id="newsCountLine">— articles matched</div>
+
+  <input id="newsSearch" class="search-box"
+         placeholder="Filter by domain or date (e.g. bbc, 20150603)…" />
+
+  <div id="newsList">
+    <div class="news-state" id="newsListState">Select a disaster to view its coverage.</div>
+  </div>
+
+  <button id="loadMoreBtn" style="display:none">Load more</button>
+</div>
+
+<script>
+const {
+  DeckGL, GeoJsonLayer, SolidPolygonLayer,
+  FlyToInterpolator, _GlobeView, MapView, TextLayer
+} = deck;
+
+// ── state ────────────────────────────────────────────────────────
+let worldData = null;
+let disasterData = { features: [] };   // the year currently displayed
+const geoCache = {};                   // year -> FeatureCollection
+
+let newsIndex = {};                    // DisNo -> article count
+let newsMeta  = { langs: [], types: [], schemes: ['http://', 'https://'] };
+let newsReady = false;
+
+let year = 2020;
+let isPlaying = false;
+let timer = null;
+let is3D = true;
+let activeType = null;
+let activeDisNo = null;
+let activeUnit = null;                 // the feature whose name the map label shows
+
+let currentArticles = [];
+let displayedCount = 0;
+const PAGE_SIZE = 20;
+
+// news record layout: [date, langIdx, typeIdx, schemeIdx, urlWithoutScheme]
+const F_DATE = 0, F_LANG = 1, F_TYPE = 2, F_SCHEME = 3, F_URL = 4;
+
+const DISASTER_COLORS = {
+  "Drought":             [210, 175, 120],
+  "Extreme temperature": [190, 110, 110],
+  "Flood":               [120, 150, 175],
+  "Storm":               [140, 145, 160],
+  "Wildfire":            [200, 130,  90],
+  "Other":               [160, 150, 140]
+};
+
+const MT_COLORS = {
+  event_name:  { bg: '#fde8e8', text: '#c0392b' },
+  peak:        { bg: '#e0f4f8', text: '#1a7a96' },
+  followup:    { bg: '#e0f4ee', text: '#1a7a55' },
+  pre:         { bg: '#e8ecf8', text: '#2c407a' },
+  anniversary: { bg: '#fdf0e8', text: '#b06020' },
+};
+
+function langBadgeStyle(lang) {
+  if (lang === 'eng') return 'background:#e0e0e0;color:#555';
+  if (lang === 'zho') return 'background:#f5e070;color:#7a6000';
+  if (lang === 'fra') return 'background:#d0e8f5;color:#1a4f72';
+  if (lang === 'spa') return 'background:#e8f5d0;color:#2a5a1a';
+  if (lang === 'deu') return 'background:#f5d0e8;color:#7a1a4f';
+  return 'background:#ddd;color:#555';
+}
+
+const MAJOR_COUNTRIES = [
+  { name: 'United States', coordinates: [-98.5,  39.0] },
+  { name: 'China',         coordinates: [104.2,  35.8] },
+  { name: 'Russia',        coordinates: [ 90.0,  61.5] },
+  { name: 'Brazil',        coordinates: [-51.9, -14.2] },
+  { name: 'Australia',     coordinates: [133.3, -25.3] },
+  { name: 'India',         coordinates: [ 78.9,  20.6] },
+  { name: 'Canada',        coordinates: [-106.3, 56.1] },
+  { name: 'South Africa',  coordinates: [ 22.9, -30.5] },
+  { name: 'France',        coordinates: [  2.2,  46.6] }
+];
+
+const getProp = (o, keys, fallback = "—") => {
+  for (const k of keys) {
+    if (o?.[k] != null && o[k] !== "") return o[k];
+  }
+  return fallback;
+};
+const disNoOf = p => getProp(p, ["DisNo.", "DisNo"], "");
+const unitName = p => getProp(p, ["Search_Name", "ADM1_NAME"], "");
+
+// Every unit drawn for one disaster in the year on display. A disaster that
+// spans several first-level units is stored as one feature per unit.
+function unitsOf(disNo) {
+  return (disasterData.features || []).filter(f => disNoOf(f.properties) === disNo);
+}
+function areasText(disNo, max = 3) {
+  const names = [...new Set(unitsOf(disNo).map(f => unitName(f.properties)).filter(Boolean))];
+  if (names.length <= max) return { short: names.join(', '), full: names.join(', '), n: names.length };
+  return { short: `${names.slice(0, max).join(', ')} +${names.length - max} more`,
+           full: names.join(', '), n: names.length };
+}
+
+let viewState = { longitude: 0, latitude: 20, zoom: 1.3, minZoom: 0.2, maxZoom: 14 };
+let deckgl;
+
+function makeView() {
+  return is3D ? new _GlobeView({ id: 'globe' }) : new MapView({ id: 'map', repeat: true });
+}
+
+// ── year loading ─────────────────────────────────────────────────
+// One file per year keeps the first view small; a year already fetched is
+// kept so that moving the slider back and forth costs nothing.
+async function loadYear(y) {
+  if (geoCache[y]) { disasterData = geoCache[y]; return; }
+  const pill = document.getElementById('yearLoading');
+  pill.textContent = `Loading ${y}…`;
+  pill.classList.add('show');
+  try {
+    const fc = await fetch(`geo/${y}.geojson`).then(r => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    });
+    geoCache[y] = fc;
+    disasterData = fc;
+  } catch (e) {
+    console.warn('year load failed', y, e);
+    disasterData = { features: [] };
+  } finally {
+    pill.classList.remove('show');
+  }
+}
+
+async function setYear(y) {
+  year = y;
+  document.getElementById('yearSlider').value = y;
+  document.getElementById('yearLabel').innerText = y;
+  activeDisNo = null;
+  activeUnit = null;
+  hideChooser();
+  await loadYear(y);
+  if (deckgl) deckgl.setProps({ layers: layers() });
+  updateList(document.getElementById('search').value.toLowerCase().trim());
+  closeNewsPanel();
+}
+
+function getFiltered() {
+  return (disasterData.features || []).filter(f => {
+    const type = getProp(f.properties, ["Disaster Type", "Disaster_Type"]);
+    return activeType ? type === activeType : true;
+  });
+}
+
+// ── layers ───────────────────────────────────────────────────────
+function layers() {
+  const data = getFiltered();
+
+  // The label names the unit the reader clicked, placed at that unit's own
+  // label point. The layer is left out altogether when nothing is selected,
+  // and its id changes with the text, so deck.gl builds a fresh label each time
+  // instead of updating the old one in place. Updating in place is what left a
+  // stale background box with a single letter behind after deselecting.
+  const labelLayers = [];
+  if (activeDisNo && activeUnit && disNoOf(activeUnit.properties) === activeDisNo) {
+    const p = activeUnit.properties;
+    const name = unitName(p);
+    if (name && name !== "Unknown" && isFinite(+p.lon) && isFinite(+p.lat)) {
+      labelLayers.push(new TextLayer({
+        id: `active-label-${activeDisNo}-${name}-${is3D ? 'g' : 'm'}`,
+        data: [{ text: name, coordinates: [+p.lon, +p.lat] }],
+        getPosition: d => d.coordinates,
+        getText: d => d.text,
+        getSize: 18,
+        getColor: [47, 47, 47, 255],
+        billboard: !is3D,
+        getAngle: is3D ? 180 : 0,
+        background: true,
+        getBackgroundColor: [255, 255, 255, 140],
+        backgroundPadding: [8, 4],
+        fontFamily: 'Georgia, serif',
+        fontWeight: 'bold',
+        characterSet: 'auto',
+        getPixelOffset: [0, -28],
+      }));
+    }
+  }
+
+  return [
+    ...(is3D ? [new SolidPolygonLayer({
+      id: "ocean",
+      data: [{ polygon: [[-180,-90],[180,-90],[180,90],[-180,90]] }],
+      getPolygon: d => d.polygon,
+      getFillColor: [232,226,214],
+    })] : []),
+
+    new GeoJsonLayer({
+      id: "world",
+      data: worldData,
+      filled: true, stroked: true,
+      getFillColor: [240, 235, 225, 100],
+      getLineColor: [180, 170, 150, 200],
+      lineWidthMinPixels: 1.2,
+    }),
+
+    new GeoJsonLayer({
+      id: `disaster-${year}`,
+      data,
+      pickable: true, extruded: false, stroked: true,
+      getFillColor: d => {
+        const type = getProp(d.properties, ["Disaster Type", "Disaster_Type"], "Other");
+        const base = DISASTER_COLORS[type] || DISASTER_COLORS.Other;
+        const alpha = (activeDisNo && activeDisNo !== disNoOf(d.properties)) ? 30 : 160;
+        return [...base, alpha];
+      },
+      getLineColor: d => activeDisNo === disNoOf(d.properties) ? [47,47,47,255] : [0,0,0,0],
+      getLineWidth: d => activeDisNo === disNoOf(d.properties) ? 2 : 0,
+      lineWidthUnits: 'pixels',
+      updateTriggers: {
+        getFillColor: [activeDisNo, activeType],
+        getLineColor: [activeDisNo],
+        getLineWidth: [activeDisNo],
+      },
+    }),
+
+    new TextLayer({
+      id: 'major-country-labels',
+      data: MAJOR_COUNTRIES,
+      getPosition: d => d.coordinates,
+      getText: d => d.name,
+      getSize: is3D ? 14 : 13,
+      getColor: [100, 90, 80, 200],
+      billboard: !is3D,
+      getAngle: is3D ? 180 : 0,
+      background: true,
+      getBackgroundColor: [255, 255, 255, 60],
+      backgroundPadding: [5, 3],
+      fontFamily: 'Georgia, serif',
+      fontWeight: 'bold',
+      characterSet: 'auto',
+    }),
+
+    ...labelLayers,
+  ];
+}
+
+function init() {
+  deckgl = new DeckGL({
+    container: "container",
+    views: makeView(),
+    controller: { inertia: true, scrollZoom: { speed: 0.05, smooth: true } },
+    viewState,
+    onViewStateChange: ({ viewState: vs, interactionState }) => {
+      viewState = { ...vs, minZoom: 0.2, maxZoom: 14 };
+      deckgl.setProps({ viewState });
+      if (interactionState && (interactionState.isDragging || interactionState.isZooming)) hideChooser();
+    },
+    getCursor: ({ isHovering, isDragging }) => isDragging ? 'grabbing' : (isHovering ? 'pointer' : 'grab'),
+    layers: layers(),
+    onClick: handleMapClick,
+  });
+}
+
+// ── selection ────────────────────────────────────────────────────
+// Where two disasters share a unit, their polygons for that unit lie exactly on
+// top of each other, and a plain click only ever reaches the upper one. So a
+// click collects every disaster under the pointer first, then decides.
+function handleMapClick(info) {
+  hideChooser();
+  if (!info.object) { clearSelection(); return; }
+
+  const hits = deckgl.pickMultipleObjects({
+    x: info.x, y: info.y, radius: 0, depth: 30, layerIds: [`disaster-${year}`],
+  });
+  const byDis = new Map();
+  for (const h of hits) {
+    if (!h.object) continue;
+    const dn = disNoOf(h.object.properties);
+    if (!byDis.has(dn)) byDis.set(dn, h.object);
+  }
+  if (byDis.size === 0) byDis.set(disNoOf(info.object.properties), info.object);
+
+  // A unit of the disaster already open keeps that disaster, and only moves
+  // the label to the unit clicked.
+  if (activeDisNo && byDis.has(activeDisNo)) {
+    selectDisaster(byDis.get(activeDisNo), { fly: false });
+    return;
+  }
+  if (byDis.size === 1) { selectDisaster([...byDis.values()][0]); return; }
+  showChooser(info.x, info.y, [...byDis.values()]);
+}
+
+function selectDisaster(f, { fly = true } = {}) {
+  const p = f.properties;
+  const dn = disNoOf(p);
+  const same = activeDisNo === dn;
+  activeDisNo = dn;
+  activeUnit = f;
+  hideChooser();
+  deckgl.setProps({ layers: layers() });
+  if (fly) flyTo(p);
+  if (!same) showInfo(f);
+  updateList(document.getElementById("search").value.toLowerCase().trim());
+}
+
+function clearSelection() {
+  activeDisNo = null;
+  activeUnit = null;
+  hideChooser();
+  deckgl.setProps({ layers: layers() });
+  updateList(document.getElementById("search").value.toLowerCase().trim());
+  closeNewsPanel();
+}
+
+function showChooser(x, y, feats) {
+  const el = document.getElementById('chooser');
+  el.innerHTML = '';
+  const head = document.createElement('div');
+  head.className = 'chooser-head';
+  head.textContent = `${feats.length} disasters include ${unitName(feats[0].properties) || 'this area'}`;
+  el.appendChild(head);
+  feats.forEach(f => {
+    const p = f.properties;
+    const type = getProp(p, ["Disaster Type", "Disaster_Type"], "Other");
+    const c = DISASTER_COLORS[type] || DISASTER_COLORS.Other;
+    const b = document.createElement('button');
+    b.className = 'chooser-item';
+    b.innerHTML = `<span class="color-dot" style="background:rgb(${c.join(',')})"></span>
+      ${disNoOf(p)} <small>${type} · ${getProp(p, ["Start_Date"], "")}</small>`;
+    b.onclick = e => { e.stopPropagation(); selectDisaster(f); };
+    el.appendChild(b);
+  });
+  el.classList.add('show');
+  const w = el.offsetWidth, h = el.offsetHeight;
+  el.style.left = Math.min(x + 12, window.innerWidth - w - 12) + 'px';
+  el.style.top  = Math.min(y + 12, window.innerHeight - h - 12) + 'px';
+}
+
+function hideChooser() {
+  document.getElementById('chooser').classList.remove('show');
+}
+
+document.getElementById('viewToggle').onclick = () => {
+  is3D = !is3D;
+  document.getElementById('viewToggle').innerText = is3D ? "Switch to 2D Map" : "Switch to 3D Globe";
+  document.getElementById('container').style.opacity = '0.6';
+  setTimeout(() => {
+    viewState = is3D
+      ? { ...viewState, zoom: Math.min(viewState.zoom, 5), minZoom: 0.2, maxZoom: 14 }
+      : { ...viewState, minZoom: 0.2, maxZoom: 14 };
+    deckgl.setProps({ views: makeView(), viewState, layers: layers() });
+    document.getElementById('container').style.opacity = '1';
+  }, 180);
+};
+
+function flyTo(p) {
+  stopPlay();
+  viewState = {
+    ...viewState,
+    longitude: parseFloat(getProp(p, ["lon"], 0)),
+    latitude:  parseFloat(getProp(p, ["lat"], 0)),
+    zoom: is3D ? 5.2 : 4.5,
+    minZoom: 0.2, maxZoom: 14,
+    transitionDuration: 1800,
+    transitionInterpolator: new FlyToInterpolator({ speed: 1.5 }),
+    transitionEasing: t => t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2, 3)/2,
+  };
+  deckgl.setProps({ viewState });
+}
+
+function home() {
+  stopPlay();
+  activeDisNo = null;
+  activeUnit  = null;
+  activeType  = null;
+  hideChooser();
+  document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
+  viewState = {
+    longitude: 0, latitude: 20, zoom: 1.3, minZoom: 0.2, maxZoom: 14,
+    transitionDuration: 1200,
+    transitionInterpolator: new FlyToInterpolator(),
+  };
+  deckgl.setProps({ viewState, layers: layers() });
+  updateList(document.getElementById("search").value.toLowerCase().trim());
+  closeNewsPanel();
+}
+
+function initTypeFilters() {
+  const container = document.getElementById('typeFilters');
+  Object.keys(DISASTER_COLORS).forEach(type => {
+    if (type === "Other") return;
+    const btn = document.createElement('button');
+    btn.className = 'type-btn';
+    const c = DISASTER_COLORS[type];
+    btn.innerHTML = `<span class="color-dot" style="background:rgb(${c.join(',')})"></span> ${type}`;
+    btn.onclick = () => {
+      if (activeType === type) { activeType = null; btn.classList.remove('active'); }
+      else {
+        activeType = type;
+        document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+      }
+      activeDisNo = null;
+      activeUnit = null;
+      hideChooser();
+      deckgl.setProps({ layers: layers() });
+      updateList(document.getElementById("search").value.toLowerCase().trim());
+    };
+    container.appendChild(btn);
+  });
+}
+
+// ── sidebar list ─────────────────────────────────────────────────
+function updateList(searchTerm = '') {
+  const el = document.getElementById("list");
+  el.innerHTML = "";
+  const filtered = getFiltered();
+
+  if (filtered.length === 0) {
+    el.innerHTML = "<p style='color:var(--soft)'>No disasters for this year.</p>";
+    return;
+  }
+
+  // A disaster spanning several first-level units appears once per unit, so
+  // collapse to one entry per DisNo before listing.
+  const byDisNo = new Map();
+  filtered.forEach(f => {
+    const dn = disNoOf(f.properties);
+    if (!byDisNo.has(dn)) byDisNo.set(dn, f);
+  });
+
+  const grouped = {};
+  byDisNo.forEach(f => {
+    const c = getProp(f.properties, ["Country"], "Unknown");
+    (grouped[c] ||= []).push(f);
+  });
+
+  Object.keys(grouped).sort().forEach(c => {
+    // A search that names the country lists all its disasters; one that names
+    // a unit or a DisNo lists only the disasters that match.
+    let items = grouped[c];
+    if (searchTerm && !c.toLowerCase().includes(searchTerm)) {
+      items = items.filter(d => {
+        const dn = disNoOf(d.properties);
+        return dn.toLowerCase().includes(searchTerm) ||
+               areasText(dn, Infinity).full.toLowerCase().includes(searchTerm);
+      });
+    }
+    if (items.length === 0) return;
+    const autoOpen = !!searchTerm && !c.toLowerCase().includes(searchTerm);
+
+    const box  = document.createElement("div");
+    const head = document.createElement("div");
+    head.className = "country-header";
+    head.innerHTML = `<span>${c}</span><span style="color:var(--soft);font-weight:normal;">${items.length} events</span>`;
+
+    const list = document.createElement("div");
+    list.className = "disaster-list";
+    if (autoOpen || items.some(d => disNoOf(d.properties) === activeDisNo)) list.style.display = "block";
+    head.onclick = () => {
+      list.style.display = list.style.display === "block" ? "none" : "block";
+    };
+
+    items.forEach(d => {
+      const p = d.properties;
+      const disNo = disNoOf(p) || "—";
+      const type  = getProp(p, ["Disaster Type", "Disaster_Type"], "Unknown");
+      const areas = areasText(disNo, 1);
+      const adm1  = areas.n > 0 && areas.full !== c ? areas.short : "";
+      const item  = document.createElement("div");
+      item.className = "disaster-item";
+      if (activeDisNo === disNo) item.classList.add("active");
+      const cDot = DISASTER_COLORS[type] || DISASTER_COLORS.Other;
+      item.innerHTML = `
+        <div style="display:flex;align-items:center;">
+          <span class="color-dot" style="background:rgb(${cDot.join(',')});margin-right:6px;"></span>
+          ${disNo}
+        </div>
+        <span class="adm1-tag" title="${areas.full}">${adm1}</span>`;
+      item.onclick = () => selectDisaster(d);
+      list.appendChild(item);
+    });
+
+    box.appendChild(head);
+    box.appendChild(list);
+    el.appendChild(box);
+  });
+}
+
+function showInfo(d) {
+  const p = d.properties;
+  const country = getProp(p, ["Country"]);
+  const disNo = disNoOf(p);
+  const disType = getProp(p, ["Disaster Type", "Disaster_Type"]);
+  const eventName = getProp(p, ["Event Name"], "");
+
+  // The news belongs to the disaster as a whole, so the card lists every unit
+  // it covers rather than the one that happened to be clicked.
+  const areas = areasText(disNo, 4);
+  const areasEl = document.getElementById('diAreas');
+  const countryLevel = areas.n === 0 || areas.full === country;
+  areasEl.textContent = countryLevel ? 'Whole country' : areas.short;
+  areasEl.title = countryLevel ? '' : areas.full;
+
+  document.getElementById('diDisno').textContent = disNo;
+  document.getElementById('diSubtitle').textContent =
+    [disType, eventName, country].filter(x => x && x !== '—').join(' · ');
+  document.getElementById('diStart').textContent = getProp(p, ["Start_Date"]);
+  document.getElementById('diEnd').textContent = getProp(p, ["End_Date"]);
+  document.getElementById('diFatal').textContent = getProp(p, ["Total Deaths", "Total_Deaths"], 0);
+
+  openNewsPanel(disNo);
+}
+
+// ── news panel ───────────────────────────────────────────────────
+let cachedDisNo = null;
+let cachedRaw = [];
+
+function domainOf(a) {
+  const u = a[F_URL] || '';
+  const cut = u.indexOf('/');
+  return (cut === -1 ? u : u.slice(0, cut)).toLowerCase();
+}
+
+async function openNewsPanel(disNo) {
+  document.getElementById('newsPanel').classList.add('open');
+  document.getElementById('viewToggle').classList.add('panel-open');
+  document.getElementById('newsSearch').value = '';
+
+  const listEl = document.getElementById('newsList');
+  const countEl = document.getElementById('newsCountLine');
+  const moreBtn = document.getElementById('loadMoreBtn');
+
+  if (!newsReady) {
+    countEl.textContent = '— articles matched';
+    listEl.innerHTML = '<div class="news-state">News data unavailable.</div>';
+    moreBtn.style.display = 'none';
+    return;
+  }
+
+  const known = newsIndex[disNo];
+  if (known === undefined) {
+    countEl.textContent = 'No news coverage';
+    listEl.innerHTML =
+      '<div class="news-state" style="padding:24px 0;">' +
+      '<div style="font-size:22px;margin-bottom:8px;">📭</div>' +
+      '<div>No matched news articles</div>' +
+      '<div style="font-size:11px;margin-top:4px;opacity:0.7;">for this disaster</div></div>';
+    moreBtn.style.display = 'none';
+    currentArticles = []; displayedCount = 0;
+    cachedDisNo = disNo; cachedRaw = [];
+    return;
+  }
+
+  countEl.textContent = `${known.toLocaleString()} article${known !== 1 ? 's' : ''} matched`;
+
+  if (cachedDisNo === disNo) { applyNewsFilter(''); return; }
+
+  listEl.innerHTML = '<div class="news-state">Loading articles…</div>';
+  moreBtn.style.display = 'none';
+
+  try {
+    const safe = disNo.replace(/[\/\\:]/g, '-');
+    const arts = await fetch(`news/${safe}.json`).then(r => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    });
+    cachedDisNo = disNo;
+    cachedRaw = arts;                 // already newest first from the builder
+    applyNewsFilter('');
+  } catch (e) {
+    listEl.innerHTML = '<div class="news-state" style="color:#c66;">Failed to load articles.</div>';
+    console.warn('news fetch failed', disNo, e);
+  }
+}
+
+function closeNewsPanel() {
+  document.getElementById('newsPanel').classList.remove('open');
+  document.getElementById('viewToggle').classList.remove('panel-open');
+  currentArticles = []; displayedCount = 0;
+}
+
+function applyNewsFilter(term) {
+  term = (term || '').toLowerCase().trim();
+  currentArticles = term
+    ? cachedRaw.filter(a => domainOf(a).includes(term) || String(a[F_DATE]).includes(term))
+    : cachedRaw;
+
+  // The file holds the most recent articles up to a cap, while the index holds
+  // the true number matched, so the two are reported separately.
+  const held = cachedRaw.length;
+  const matched = newsIndex[cachedDisNo] ?? held;
+  const showing = currentArticles.length;
+  const capped = held < matched;
+
+  let line;
+  if (term) {
+    line = `${showing.toLocaleString()} of ${held.toLocaleString()} shown articles match the filter`;
+  } else if (capped) {
+    line = `${matched.toLocaleString()} articles matched, showing the most recent ${held.toLocaleString()}`;
+  } else {
+    line = `${held.toLocaleString()} article${held !== 1 ? 's' : ''} matched`;
+  }
+  document.getElementById('newsCountLine').textContent = line;
+
+  const listEl = document.getElementById('newsList');
+  listEl.innerHTML = '';
+  displayedCount = 0;
+
+  if (showing === 0) {
+    listEl.innerHTML = '<div class="news-state">No articles match the filter.</div>';
+    document.getElementById('loadMoreBtn').style.display = 'none';
+    return;
+  }
+  renderNewsList(PAGE_SIZE);
+}
+
+function renderNewsList(addCount) {
+  const listEl = document.getElementById('newsList');
+  const end = Math.min(displayedCount + addCount, currentArticles.length);
+  const frag = document.createDocumentFragment();
+  for (let i = displayedCount; i < end; i++) frag.appendChild(buildNewsCard(currentArticles[i]));
+  listEl.appendChild(frag);
+  displayedCount = end;
+
+  const btn = document.getElementById('loadMoreBtn');
+  const remaining = currentArticles.length - displayedCount;
+  if (remaining > 0) { btn.style.display = 'block'; btn.textContent = `Load more (${remaining} remaining)`; }
+  else btn.style.display = 'none';
+}
+
+function buildNewsCard(a) {
+  const raw = String(a[F_DATE] || '');
+  const dispDate = raw.length === 8
+    ? `${raw.slice(0,4)}-${raw.slice(4,6)}-${raw.slice(6,8)}` : raw;
+
+  const scheme = newsMeta.schemes[a[F_SCHEME]] || 'http://';
+  const fullUrl = a[F_URL] ? scheme + a[F_URL] : '';
+  const domain = domainOf(a);
+  let path = a[F_URL] ? a[F_URL].slice(domain.length) : '';
+  if (path.length > 60) path = path.slice(0, 57) + '…';
+
+  const lang = newsMeta.langs[a[F_LANG]] || 'eng';
+  const lBadge = `<span class="nc-badge" style="${langBadgeStyle(lang)}">${lang}</span>`;
+
+  const mt = newsMeta.types[a[F_TYPE]] || '';
+  const mtc = MT_COLORS[mt] || { bg: '#eee', text: '#888' };
+  const tBadge = mt ? `<span class="nc-badge" style="background:${mtc.bg};color:${mtc.text}">${mt}</span>` : '';
+
+  const card = document.createElement('a');
+  card.className = 'news-card';
+  card.href = fullUrl || '#';
+  card.target = '_blank';
+  card.rel = 'noopener noreferrer';
+  card.innerHTML = `
+    <div class="news-card-row1"><span class="nc-date">${dispDate}</span>${lBadge}${tBadge}</div>
+    <div class="nc-source">${domain || '—'}</div>
+    <div class="nc-url">${path || '/'}</div>`;
+  return card;
+}
+
+document.getElementById('newsSearch').addEventListener('input', e => {
+  if (activeDisNo && cachedDisNo === activeDisNo) applyNewsFilter(e.target.value);
+});
+document.getElementById('loadMoreBtn').addEventListener('click', () => renderNewsList(PAGE_SIZE));
+document.getElementById('newsPanelClose').addEventListener('click', clearSelection);
+
+// ── playback ─────────────────────────────────────────────────────
+function startPlay() {
+  if (timer) return;
+  timer = setInterval(async () => {
+    if (!isPlaying) return;
+    await setYear(year >= 2023 ? 2015 : year + 1);
+  }, 2600);
+}
+function stopPlay() {
+  isPlaying = false;
+  document.getElementById("play").innerText = "▶";
+  clearInterval(timer);
+  timer = null;
+}
+document.getElementById("play").onclick = () => {
+  isPlaying = !isPlaying;
+  document.getElementById("play").innerText = isPlaying ? "⏸" : "▶";
+  if (isPlaying) startPlay(); else stopPlay();
+};
+document.getElementById("home").onclick = home;
+
+document.getElementById("yearSlider").oninput = e => { stopPlay(); setYear(+e.target.value); };
+document.getElementById("search").oninput = e => { stopPlay(); updateList(e.target.value.toLowerCase().trim()); };
+
+// ── boot ─────────────────────────────────────────────────────────
+async function load() {
+  try {
+    const [worldRes, idxRes, metaRes] = await Promise.allSettled([
+      fetch("geo/world.geojson").then(r => r.json()),
+      fetch("news/_index.json").then(r => r.json()),
+      fetch("news/_meta.json").then(r => r.json()),
+    ]);
+
+    if (worldRes.status === 'rejected') throw new Error('geo/world.geojson failed to load');
+    worldData = worldRes.value;
+
+    if (idxRes.status === 'fulfilled' && metaRes.status === 'fulfilled') {
+      newsIndex = idxRes.value;
+      newsMeta = metaRes.value;
+      newsReady = true;
+    } else {
+      console.warn('news index or meta failed to load');
+      document.getElementById('newsListState').textContent =
+        'News data unavailable. Check that news/_index.json and news/_meta.json exist.';
+    }
+
+    await loadYear(year);
+    initTypeFilters();
+    init();
+    updateList();
+  } catch (err) {
+    document.getElementById("list").innerHTML =
+      "<p style='color:#c00'>Map data failed to load.</p>";
+    console.error(err);
+  }
+}
+
+load();
+</script>
+</body>
+</html>
